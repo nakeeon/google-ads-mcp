@@ -19,6 +19,8 @@
 from typing import Any
 import proto
 import logging
+from fastmcp.exceptions import ToolError
+from google.ads.googleads.errors import GoogleAdsException
 from google.ads.googleads.client import GoogleAdsClient
 from google.ads.googleads.v24.services.services.google_ads_service import (
     GoogleAdsServiceClient,
@@ -125,3 +127,42 @@ def get_gaql_resources_filepath():
     package_root = importlib.resources.files("ads_mcp")
     file_path = package_root.joinpath(_GAQL_FILENAME)
     return file_path
+
+
+def get_resource_status(
+    customer_id: str,
+    resource_name: str,
+    status_field: str,
+    gaql_resource: str,
+) -> str | None:
+    """Returns the current status string of a Google Ads resource.
+
+    Args:
+        customer_id: The customer ID.
+        resource_name: The full resource name (e.g. 'customers/123/campaigns/456').
+        status_field: The GAQL field path for status (e.g. 'campaign.status').
+        gaql_resource: The GAQL resource name (e.g. 'campaign').
+
+    Returns:
+        The status string (e.g. 'ENABLED', 'PAUSED') or None if not found.
+    """
+    ga_service = get_googleads_service("GoogleAdsService")
+    query = (
+        f"SELECT {status_field} FROM {gaql_resource} "
+        f"WHERE {gaql_resource}.resource_name = '{resource_name}'"
+    )
+
+    for batch in ga_service.search_stream(customer_id=customer_id, query=query):
+        for row in batch.results:
+            value = get_nested_attr(row, status_field)
+            return format_output_value(value)
+
+    return None
+
+
+def raise_for_google_ads_exception(ex: GoogleAdsException) -> None:
+    """Raises a ToolError from a GoogleAdsException with API error details."""
+    error_msgs = [
+        f"Google Ads API Error: {error.message}" for error in ex.failure.errors
+    ]
+    raise ToolError(f"Request ID: {ex.request_id}\n" + "\n".join(error_msgs))
